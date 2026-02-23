@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "FeedScroller",
+  "version": "1.0.0",
+  "description": "Restores scroll position to your last checked item on specific social sites.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://letterboxd.com/*",
+        "https://x.com/*",
+        "https://www.x.com/*",
+        "https://bsky.app/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
