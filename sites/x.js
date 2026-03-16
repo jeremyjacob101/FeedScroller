@@ -11,7 +11,10 @@
     },
     install() {
       (() => {
-        if (window.__arcJKBoostInstalled_X) return;
+        if (window.__arcJKBoostInstalled_X) {
+          window.__arcJK_X?.resync?.({ shouldRestore: true });
+          return;
+        }
         window.__arcJKBoostInstalled_X = true;
 
         const KEY_SINK_ID = "__arc_jk_key_sink__";
@@ -20,13 +23,8 @@
 
         const BLOCK_PHRASES = ["stuns for", "bridgerton"];
 
-        const HOME_TAB_XPATH =
-          "/html/body/div[1]/div/div/div[2]/main/div/div/div/div[1]/div/div[1]/div[1]/div/nav/div/div[2]/div/div[1]";
-        const MOVIES_TAB_XPATH =
-          "/html/body/div[1]/div/div/div[2]/main/div/div/div/div[1]/div/div[1]/div[1]/div/nav/div/div[2]/div/div[4]";
-
-        const MOVIES_TAB_SELECTED_XPATH =
-          "/html/body/div[1]/div/div/div[2]/main/div/div/div/div[1]/div/div[1]/div[1]/div/nav/div/div[2]/div/div[4]/div";
+        const TIMELINE_TABS_CONTAINER_XPATH =
+          "/html/body/div[1]/div/div/div[2]/main/div/div/div/div[1]/div/div[1]/div[1]/div/nav/div/div[2]/div";
 
         const HIGHLIGHT_BOX_ID = "__arc_jk_highlight_box__";
         const PROGRESS_BOX_CLASS = "__arc_jk_progress_box__";
@@ -40,6 +38,11 @@
         const RESTORE_MAX_STUCK_TICKS = 140;
         const RESTORE_STEP_FACTOR = 0.9;
         const RESTORE_BOTTOM_MARGIN_SCREENS = 2.0;
+        let currentScope = null;
+        let runtimeSyncQueued = false;
+        let runtimeRestoreRequested = false;
+        let runtimeForceRequested = false;
+        let activeRestoreRun = 0;
 
         let DEBUG = false;
         try {
@@ -209,21 +212,137 @@
           if (el) el.remove();
         }
 
-        function isMoviesActiveNow() {
-          const moviesSel = evalXPathFirst(MOVIES_TAB_SELECTED_XPATH);
+        function normalizeKeyPart(value) {
           return (
-            !!moviesSel && moviesSel.getAttribute("aria-selected") === "true"
+            String(value || "")
+              .trim()
+              .toLowerCase()
+              .replace(/\s+/g, " ")
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "") || "unknown"
           );
         }
 
-        function clickedInsideMoviesTab(e) {
-          const moviesWrap = evalXPathFirst(MOVIES_TAB_XPATH);
-          return !!moviesWrap && moviesWrap.contains(e.target);
+        function getTimelineTabLabel(tab) {
+          if (!tab) return "";
+          const label =
+            tab.querySelector("span")?.textContent ||
+            tab.textContent ||
+            tab.getAttribute("aria-label") ||
+            "";
+          return String(label).trim();
         }
 
-        function clickedInsideHomeTab(e) {
-          const home = evalXPathFirst(HOME_TAB_XPATH);
-          return !!home && home.contains(e.target);
+        function findTimelineTabsContainer() {
+          const byXpath = evalXPathFirst(TIMELINE_TABS_CONTAINER_XPATH);
+          if (byXpath && byXpath.querySelectorAll('[role="tab"]').length) {
+            return byXpath;
+          }
+
+          const main = document.querySelector("main");
+          if (!main) return null;
+
+          const navs = Array.from(main.querySelectorAll("nav"));
+          for (const nav of navs) {
+            const tabs = Array.from(nav.querySelectorAll('[role="tab"]'));
+            if (tabs.length < 2) continue;
+
+            const labels = tabs
+              .map((tab) => getTimelineTabLabel(tab).toLowerCase())
+              .filter(Boolean);
+
+            if (labels.includes("for you") || labels.includes("following")) {
+              return nav;
+            }
+          }
+
+          return null;
+        }
+
+        function getTimelineTabs() {
+          const container = findTimelineTabsContainer();
+          if (!container) return [];
+
+          return Array.from(container.querySelectorAll('[role="tab"]'))
+            .map((tab, index) => {
+              const label = getTimelineTabLabel(tab);
+              return {
+                active: tab.getAttribute("aria-selected") === "true",
+                index,
+                key: normalizeKeyPart(label || `tab-${index}`),
+                label: label || `Tab ${index + 1}`,
+                tab,
+              };
+            })
+            .filter((tab) => !!tab.label);
+        }
+
+        function getTimelineScope() {
+          const tabs = getTimelineTabs();
+          if (!tabs.length) {
+            const normalizedPath =
+              location.pathname.replace(/\/+$/, "").toLowerCase() || "/";
+            if (normalizedPath === "/home") {
+              return {
+                allowsPersistence: false,
+                allowsRestore: false,
+                kind: "timeline",
+                key: "pending",
+                label: "pending",
+                storageKey: null,
+              };
+            }
+            return null;
+          }
+
+          const activeTab = tabs.find((tab) => tab.active);
+          if (!activeTab) {
+            return {
+              allowsPersistence: false,
+              allowsRestore: false,
+              kind: "timeline",
+              key: "unknown",
+              label: "unknown",
+              storageKey: null,
+            };
+          }
+
+          const isPrimaryTab = activeTab.index === 0;
+          return {
+            allowsPersistence: !isPrimaryTab,
+            allowsRestore: !isPrimaryTab,
+            kind: "timeline",
+            key: activeTab.key,
+            label: activeTab.label,
+            storageKey: isPrimaryTab
+              ? null
+              : `${STORAGE_KEY}::timeline::${activeTab.key}`,
+          };
+        }
+
+        function getScopeToken(scope) {
+          if (!scope) return "none";
+          return `${scope.kind}:${scope.key}:${scope.allowsRestore ? "1" : "0"}`;
+        }
+
+        function getActiveScope() {
+          if (!currentScope) currentScope = getTimelineScope();
+          return currentScope;
+        }
+
+        function isMoviesActiveNow() {
+          return !!getTimelineScope()?.allowsRestore;
+        }
+
+        function clickedInsideTimelineTab(e) {
+          const tab = e.target.closest?.('[role="tab"]');
+          const container = findTimelineTabsContainer();
+          return !!(tab && container && container.contains(tab));
+        }
+
+        function cancelRestore() {
+          activeRestoreRun += 1;
+          restoring = false;
         }
 
         function extractStatusId(href) {
@@ -256,26 +375,30 @@
           return extractStatusId(a.getAttribute("href"));
         }
 
-        function loadProgressId() {
+        function loadProgressId(scope = getActiveScope()) {
+          if (!scope?.storageKey) return null;
           try {
-            const raw = localStorage.getItem(STORAGE_KEY);
+            const raw = localStorage.getItem(scope.storageKey);
             return raw && typeof raw === "string" ? raw : null;
           } catch {
             return null;
           }
         }
 
-        function saveProgressId(id) {
-          if (!id) return;
+        function saveProgressId(id, scope = getActiveScope()) {
+          if (!id || !scope?.allowsPersistence || !scope.storageKey) return false;
           try {
-            localStorage.setItem(STORAGE_KEY, String(id));
+            localStorage.setItem(scope.storageKey, String(id));
           } catch {}
+          return true;
         }
 
-        function clearProgressId() {
+        function clearProgressId(scope = getActiveScope()) {
+          if (!scope?.storageKey) return false;
           try {
-            localStorage.removeItem(STORAGE_KEY);
+            localStorage.removeItem(scope.storageKey);
           } catch {}
+          return true;
         }
 
         function normalizeTextForMatch(s) {
@@ -413,7 +536,8 @@
         function syncUI() {
           if (!moviesActive) return;
 
-          if (!isMoviesActiveNow()) {
+          const scope = getActiveScope();
+          if (!scope?.allowsRestore) {
             deactivateMovies();
             return;
           }
@@ -422,7 +546,7 @@
           if (DEBUG) ensureDebugBox();
 
           const items = getItems();
-          const saved = loadProgressId();
+          const saved = loadProgressId(scope);
 
           if (current && document.contains(current)) {
             const r = current.getBoundingClientRect();
@@ -474,6 +598,15 @@
                 (e) => {
                   stopOnly(e);
 
+                  const scope = getActiveScope();
+                  if (!scope?.allowsPersistence) {
+                    cb.checked = false;
+                    setCurrent(item, { preventScroll: true });
+                    queueSync();
+                    cb.blur?.();
+                    return;
+                  }
+
                   const itemId = item.dataset.arcJkId || getItemId(item);
                   if (!itemId) {
                     cb.checked = false;
@@ -481,8 +614,8 @@
                   }
                   item.dataset.arcJkId = itemId;
 
-                  if (cb.checked) saveProgressId(itemId);
-                  else if (loadProgressId() === itemId) clearProgressId();
+                  if (cb.checked) saveProgressId(itemId, scope);
+                  else if (loadProgressId(scope) === itemId) clearProgressId(scope);
 
                   setCurrent(item, { preventScroll: true });
                   queueSync();
@@ -549,6 +682,7 @@
             updateDebugBox(
               [
                 `debug: ${DEBUG ? "ON" : "OFF"}  moviesActive=${moviesActive} restoring=${restoring}`,
+                `scope=${scope?.label || "-"}`,
                 `savedId=${saved || "-"}`,
                 `currentId=${curId || "-"}`,
                 `items=${items.length}  first=${firstId || "-"}  last=${lastId || "-"}`,
@@ -611,13 +745,18 @@
 
         function toggleProgressForCurrent() {
           if (!current) return;
+          const scope = getActiveScope();
+          if (!scope?.allowsPersistence) {
+            queueSync();
+            return;
+          }
           const id = current.dataset.arcJkId || getItemId(current);
           if (!id) return;
           current.dataset.arcJkId = id;
 
-          const saved = loadProgressId();
-          if (saved === id) clearProgressId();
-          else saveProgressId(id);
+          const saved = loadProgressId(scope);
+          if (saved === id) clearProgressId(scope);
+          else saveProgressId(id, scope);
 
           queueSync();
         }
@@ -633,13 +772,14 @@
           return null;
         }
 
-        function restoreProgressIfAny() {
-          const savedId = loadProgressId();
-          if (!savedId) return;
-          if (!moviesActive) return;
+        function restoreProgressIfAny({ scope = getActiveScope() } = {}) {
+          const savedId = loadProgressId(scope);
+          if (!savedId || !moviesActive || !scope?.allowsRestore) return;
 
+          const restoreRun = ++activeRestoreRun;
+          const scopeToken = getScopeToken(scope);
           restoring = true;
-          log("Restore start. savedId=", savedId);
+          log("Restore start. scope=", scope.label, "savedId=", savedId);
 
           const startedAt = Date.now();
           let stuckTicks = 0;
@@ -649,16 +789,17 @@
           let lastItemCount = -1;
 
           const tick = () => {
+            if (restoreRun !== activeRestoreRun) return;
+
             if (!moviesActive) {
               restoring = false;
               log("Restore stop: moviesActive=false");
               return;
             }
 
-            if (!isMoviesActiveNow()) {
+            if (getScopeToken(currentScope) !== scopeToken) {
               restoring = false;
-              log("Restore stop: movies unselected");
-              deactivateMovies();
+              log("Restore stop: scope changed");
               return;
             }
 
@@ -760,7 +901,7 @@
           setTimeout(tick, 50);
         }
 
-        function activateMovies() {
+        function activateMovies({ shouldRestore = false } = {}) {
           if (moviesActive) return;
           moviesActive = true;
 
@@ -775,16 +916,16 @@
           setTimeout(() => {
             if (!moviesActive) return;
             queueSync();
-            restoreProgressIfAny();
+            if (shouldRestore) restoreProgressIfAny({ scope: getActiveScope() });
           }, 120);
 
-          log("Movies activated");
+          log("Timeline activated:", getActiveScope()?.label || "unknown");
         }
 
         function deactivateMovies() {
           if (!moviesActive) return;
           moviesActive = false;
-          restoring = false;
+          cancelRestore();
 
           clearSelection();
           removeAllCheckboxes();
@@ -793,23 +934,70 @@
 
           if (DEBUG) updateDebugBox("debug: ON\n(movies deactivated)");
 
-          log("Movies deactivated");
+          log("Timeline deactivated");
         }
 
-        function waitForMoviesSelectedThenActivate() {
-          const START = Date.now();
-          const MAX_WAIT_MS = 8000;
+        function syncActiveTimeline({
+          shouldRestore = false,
+          force = false,
+        } = {}) {
+          const nextScope = getTimelineScope();
+          const nextToken = getScopeToken(nextScope);
+          const scopeChanged =
+            force || getScopeToken(currentScope) !== nextToken;
 
-          const poll = () => {
-            if (isMoviesActiveNow()) {
-              activateMovies();
-              return;
-            }
-            if (Date.now() - START > MAX_WAIT_MS) return;
-            setTimeout(poll, 60);
-          };
+          currentScope = nextScope;
 
-          poll();
+          if (!nextScope?.allowsRestore) {
+            if (moviesActive) deactivateMovies();
+            return;
+          }
+
+          if (scopeChanged) {
+            cancelRestore();
+            clearSelection();
+          }
+
+          if (!moviesActive) {
+            activateMovies({ shouldRestore });
+            return;
+          }
+
+          queueSync();
+
+          if (shouldRestore && scopeChanged) {
+            setTimeout(() => {
+              if (!moviesActive) return;
+              if (getScopeToken(currentScope) !== nextToken) return;
+              queueSync();
+              restoreProgressIfAny({ scope: currentScope });
+            }, 120);
+          }
+        }
+
+        function queueRuntimeSync({
+          shouldRestore = false,
+          force = false,
+        } = {}) {
+          if (shouldRestore) runtimeRestoreRequested = true;
+          if (force) runtimeForceRequested = true;
+          if (runtimeSyncQueued) return;
+
+          runtimeSyncQueued = true;
+          requestAnimationFrame(() => {
+            runtimeSyncQueued = false;
+
+            const restoreRequested = runtimeRestoreRequested;
+            const forceRequested = runtimeForceRequested;
+
+            runtimeRestoreRequested = false;
+            runtimeForceRequested = false;
+
+            syncActiveTimeline({
+              force: forceRequested,
+              shouldRestore: restoreRequested,
+            });
+          });
         }
 
         function handleKey(e) {
@@ -874,40 +1062,53 @@
         document.addEventListener(
           "click",
           (e) => {
-            if (clickedInsideMoviesTab(e)) {
-              setTimeout(waitForMoviesSelectedThenActivate, 30);
-              return;
-            }
-
-            if (clickedInsideHomeTab(e)) {
-              deactivateMovies();
-              return;
-            }
-
-            if (moviesActive && !isMoviesActiveNow()) {
-              deactivateMovies();
-            }
+            if (!clickedInsideTimelineTab(e)) return;
+            setTimeout(() => {
+              queueRuntimeSync({ shouldRestore: true });
+            }, 30);
           },
           true,
         );
 
         const mo = new MutationObserver(() => {
-          if (!moviesActive) return;
-          if (!isMoviesActiveNow()) deactivateMovies();
-          else queueSync();
+          queueRuntimeSync({ shouldRestore: true });
         });
         mo.observe(document.documentElement, {
           childList: true,
           subtree: true,
         });
 
-        deactivateMovies();
+        window.addEventListener(
+          "popstate",
+          () => {
+            queueRuntimeSync({ shouldRestore: true });
+          },
+          true,
+        );
+
+        window.addEventListener(
+          "hashchange",
+          () => {
+            queueRuntimeSync({ shouldRestore: true });
+          },
+          true,
+        );
 
         window.__arcJK_X = {
           isMoviesActiveNow,
-          activate: () => waitForMoviesSelectedThenActivate(),
+          activate: () => queueRuntimeSync({ force: true, shouldRestore: true }),
           deactivate: () => deactivateMovies(),
-          forceSync: () => queueSync(),
+          forceSync: () => {
+            queueRuntimeSync({ force: true });
+            queueSync();
+          },
+          getActiveScope: () => getActiveScope(),
+          resync: (options = {}) => {
+            queueRuntimeSync({
+              force: !!options.force,
+              shouldRestore: options.shouldRestore !== false,
+            });
+          },
           debug: {
             get: () => DEBUG,
             set: (v) => setDebugEnabled(!!v, { persist: true }),
@@ -921,6 +1122,8 @@
             },
           },
         };
+
+        queueRuntimeSync({ force: true, shouldRestore: true });
 
         if (DEBUG) ensureDebugBox();
       })();

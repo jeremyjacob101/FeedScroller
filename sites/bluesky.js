@@ -10,7 +10,10 @@
     },
     install() {
       (() => {
-        if (window.__arcJKBoostInstalled) return;
+        if (window.__arcJKBoostInstalled) {
+          window.__arcJK?.resync?.({ shouldRestore: true });
+          return;
+        }
         window.__arcJKBoostInstalled = true;
 
         const DEBUG = false;
@@ -65,6 +68,11 @@
         let navScrollTimer = null;
 
         let restoring = false;
+        let currentScope = null;
+        let syncQueued = false;
+        let syncRestoreRequested = false;
+        let syncForceRequested = false;
+        let activeRestoreRun = 0;
 
         function log(...args) {
           if (DEBUG) console.log("[arc-jk]", ...args);
@@ -126,6 +134,10 @@
 
         const FEED_CONTAINER_XPATH =
           "/html/body/div[1]/div/div/div/div/div/main/div[2]/div/div/div/div[2]/div/div[6]/div/div[1]/div/div[2]/div";
+        const FOLLOWING_FEED_CONTAINER_XPATH =
+          "/html/body/div[1]/div/div/div/div/div/main/div[2]/div/div/div/div[2]/div/div[5]/div/div[1]/div/div[2]/div";
+        const HOME_FEED_TABS_CONTAINER_XPATH =
+          "/html/body/div[1]/div/div/div/div/div/main/div[2]/div/div/div/div[2]/div/div[3]/div/div[1]/div";
 
         function evalXPathFirst(path) {
           try {
@@ -142,20 +154,268 @@
           }
         }
 
-        function scoreContainer(el) {
-          const kids = Array.from(el.children).filter((c) => c.nodeType === 1);
-          if (kids.length < 20) return -Infinity;
-
-          const divKids = kids.filter((k) => k.tagName === "DIV");
-          if (divKids.length / kids.length < 0.8) return -Infinity;
-
-          const visibleKids = divKids.filter(visibleInViewport);
-          return visibleKids.length * 100 + divKids.length;
+        function normalizeKeyPart(value) {
+          return (
+            String(value || "")
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "") || "unknown"
+          );
         }
 
-        function findFeedContainer() {
+        function parseRgb(color) {
+          const match = String(color || "").match(/rgba?\(([^)]+)\)/i);
+          if (!match) return null;
+
+          const channels = match[1]
+            .split(",")
+            .slice(0, 3)
+            .map((value) => Number.parseFloat(value.trim()));
+
+          return channels.some((value) => Number.isNaN(value))
+            ? null
+            : channels;
+        }
+
+        function colorLooksActive(color) {
+          const rgb = parseRgb(color);
+          if (!rgb) return false;
+          return rgb.every((channel) => channel >= 235);
+        }
+
+        function indicatorLooksActive(el) {
+          if (!el) return false;
+          const style = getComputedStyle(el);
+          const rgb = parseRgb(style.backgroundColor);
+          const opacity = Number.parseFloat(style.opacity || "1");
+          return !!rgb && opacity > 0.05 && rgb.some((channel) => channel > 0);
+        }
+
+        function findHomeFeedTabsContainer() {
+          const byXpath = evalXPathFirst(HOME_FEED_TABS_CONTAINER_XPATH);
+          if (byXpath) {
+            const roleTabCount = byXpath.querySelectorAll('[role="tab"]').length;
+            if (roleTabCount >= 2) return byXpath;
+          }
+
+          const firstTab = document.querySelector(
+            '[role="tab"][data-testid^="homeScreenFeedTabs-selector-"]',
+          );
+          let node = firstTab?.parentElement || null;
+
+          while (node && node !== document.body) {
+            if (node.querySelectorAll('[role="tab"]').length >= 2) return node;
+            node = node.parentElement;
+          }
+
+          return byXpath;
+        }
+
+        function getHomeFeedTabs() {
+          const selectorTabs = Array.from(
+            document.querySelectorAll(
+              '[role="tab"][data-testid^="homeScreenFeedTabs-selector-"]',
+            ),
+          );
+          const container = findHomeFeedTabsContainer();
+          const containerTabs = container
+            ? Array.from(container.querySelectorAll('[role="tab"]'))
+            : [];
+
+          let tabs =
+            containerTabs.length > selectorTabs.length ? containerTabs : selectorTabs;
+
+          if (!tabs.length && container) {
+            tabs = Array.from(container.querySelectorAll('[tabindex]')).filter(
+              (el) => {
+                const text = (el.textContent || "").trim();
+                return !!text;
+              },
+            );
+          }
+
+          return tabs.map((tab, index) => {
+            const labelEl =
+              Array.from(
+                tab.querySelectorAll('[data-testid^="homeScreenFeedTabs-"]'),
+              ).find((node) => {
+                const testId = node.getAttribute("data-testid") || "";
+                return !testId.includes("selector-");
+              }) || tab.querySelector('[dir="auto"]');
+
+            const testId = labelEl?.getAttribute("data-testid") || "";
+            const labelFromTestId = testId.startsWith("homeScreenFeedTabs-")
+              ? testId.replace("homeScreenFeedTabs-", "")
+              : "";
+            const label = String(
+              labelFromTestId || labelEl?.textContent || tab.textContent || "",
+            ).trim();
+            const children = labelEl ? Array.from(labelEl.children) : [];
+            const indicator =
+              children.length > 0 ? children[children.length - 1] : null;
+
+            return {
+              active:
+                tab.getAttribute("aria-selected") === "true" ||
+                labelEl?.getAttribute("aria-selected") === "true" ||
+                indicatorLooksActive(indicator) ||
+                colorLooksActive(getComputedStyle(labelEl || tab).color),
+              index,
+              key: normalizeKeyPart(labelFromTestId || label || `tab-${index}`),
+              label: label || `Tab ${index + 1}`,
+              tab,
+            };
+          });
+        }
+
+        function getProgressScope() {
+          const homeTabs = getHomeFeedTabs();
+          if (homeTabs.length) {
+            const activeTab = homeTabs.find((tab) => tab.active);
+            if (!activeTab) {
+              return {
+                allowsPersistence: false,
+                allowsRestore: false,
+                kind: "home-tab",
+                key: "unknown",
+                label: "unknown",
+                storageKey: null,
+              };
+            }
+
+            const isPrimaryHomeTab = activeTab.index === 0;
+            return {
+              allowsPersistence: !isPrimaryHomeTab,
+              allowsRestore: !isPrimaryHomeTab,
+              kind: "home-tab",
+              key: activeTab.key,
+              label: activeTab.label,
+              storageKey: isPrimaryHomeTab
+                ? null
+                : `${STORAGE_KEY}::home-tab::${activeTab.key}`,
+            };
+          }
+
+          const normalizedPath =
+            location.pathname.replace(/\/+$/, "").toLowerCase() || "/";
+          if (normalizedPath === "/") {
+            return {
+              allowsPersistence: false,
+              allowsRestore: false,
+              kind: "home-tab",
+              key: "pending",
+              label: "pending",
+              storageKey: null,
+            };
+          }
+
+          return {
+            allowsPersistence: true,
+            allowsRestore: true,
+            kind: "global",
+            key: "global",
+            label: "global",
+            storageKey: STORAGE_KEY,
+          };
+        }
+
+        function getScopeToken(scope) {
+          if (!scope) return "none";
+          return `${scope.kind}:${scope.key}:${scope.allowsPersistence ? "1" : "0"}`;
+        }
+
+        function getActiveScope() {
+          if (!currentScope) currentScope = getProgressScope();
+          return currentScope;
+        }
+
+        function cancelRestore() {
+          activeRestoreRun += 1;
+          restoring = false;
+        }
+
+        function isLikelyPostPermalinkAnchor(anchor) {
+          if (!anchor) return false;
+          const href = normalizeHref(anchor.getAttribute("href"));
+          if (!href || !/^\/profile\/[^/]+\/post\/[^/?#]+/i.test(href)) {
+            return false;
+          }
+
+          return (
+            anchor.hasAttribute("data-tooltip") ||
+            anchor.hasAttribute("aria-label") ||
+            ((anchor.textContent || "").trim().length > 0 &&
+              (anchor.textContent || "").trim().length <= 12)
+          );
+        }
+
+        function hasPostContentOrControls(node) {
+          if (!node) return false;
+
+          const hasContent =
+            !!node.querySelector?.('[data-testid="contentHider-post"]') ||
+            !!node.querySelector?.('[data-testid="postText"]');
+          const hasControls =
+            !!node.querySelector?.('[data-testid="replyBtn"]') ||
+            !!node.querySelector?.('[data-testid="likeBtn"]') ||
+            !!node.querySelector?.('[data-testid="postShareBtn"]') ||
+            !!node.querySelector?.('[data-testid="postDropdownBtn"]') ||
+            !!node.querySelector?.('[data-testid="postBookmarkBtn"]');
+
+          return hasContent || hasControls;
+        }
+
+        function shouldUseFollowingItemStrategy(scope = getActiveScope()) {
+          return scope?.kind === "home-tab" && scope.key === "following";
+        }
+
+        function isFeedItemElement(el) {
+          return !!getBestPermalinkAnchor(el);
+        }
+
+        function isFollowingOuterItemElement(el) {
+          if (!el || el.nodeType !== 1 || el.tagName !== "DIV") return false;
+          if (!hasPostContentOrControls(el)) return false;
+          return !!getBestFollowingPermalinkAnchor(el);
+        }
+
+        function countLegacyPostChildren(container) {
+          if (!container) return { total: 0, visible: 0 };
+
+          let total = 0;
+          let visible = 0;
+
+          for (const child of Array.from(container.children || [])) {
+            if (child.nodeType !== 1 || child.tagName !== "DIV") continue;
+            if (!isFeedItemElement(child)) continue;
+            total += 1;
+            if (visibleInViewport(child)) visible += 1;
+          }
+
+          return { total, visible };
+        }
+
+        function scoreLegacyContainer(el) {
+          const kids = Array.from(el.children).filter((c) => c.nodeType === 1);
+          if (kids.length < 2) return -Infinity;
+
+          const divKids = kids.filter((k) => k.tagName === "DIV");
+          if (divKids.length / kids.length < 0.6) return -Infinity;
+
+          const postChildren = countLegacyPostChildren(el);
+          if (postChildren.total < 2) return -Infinity;
+
+          return (
+            postChildren.visible * 1000 +
+            postChildren.total * 100 -
+            Math.max(0, divKids.length - postChildren.total)
+          );
+        }
+
+        function findLegacyFeedContainer() {
           const byXpath = evalXPathFirst(FEED_CONTAINER_XPATH);
-          if (byXpath && byXpath.children && byXpath.children.length >= 10) {
+          if (byXpath && countLegacyPostChildren(byXpath).total >= 2) {
             return byXpath;
           }
 
@@ -167,19 +427,122 @@
           let bestScore = -Infinity;
 
           for (const el of candidates) {
-            const s = scoreContainer(el);
+            const s = scoreLegacyContainer(el);
             if (s > bestScore) {
               bestScore = s;
               best = el;
             }
           }
+
           return best;
         }
 
-        function getItems(container) {
-          if (!container) return [];
-          return Array.from(container.children).filter(
-            (el) => el.tagName === "DIV",
+        function countFollowingPostChildren(container) {
+          if (!container) return { total: 0, visible: 0 };
+
+          let total = 0;
+          let visible = 0;
+
+          for (const child of Array.from(container.children || [])) {
+            if (!isFollowingOuterItemElement(child)) continue;
+            total += 1;
+            if (visibleInViewport(child)) visible += 1;
+          }
+
+          return { total, visible };
+        }
+
+        function scoreFollowingContainer(el) {
+          const kids = Array.from(el.children).filter((c) => c.nodeType === 1);
+          if (kids.length < 2) return -Infinity;
+
+          const divKids = kids.filter((k) => k.tagName === "DIV");
+          if (divKids.length / kids.length < 0.6) return -Infinity;
+
+          const postChildren = countFollowingPostChildren(el);
+          if (postChildren.total < 2) return -Infinity;
+
+          return (
+            postChildren.visible * 1000 +
+            postChildren.total * 100 -
+            Math.max(0, divKids.length - postChildren.total)
+          );
+        }
+
+        function findFollowingFeedContainer() {
+          const byFollowingXpath = evalXPathFirst(FOLLOWING_FEED_CONTAINER_XPATH);
+          if (byFollowingXpath && countFollowingPostChildren(byFollowingXpath).total >= 2) {
+            return byFollowingXpath;
+          }
+
+          const byGenericXpath = evalXPathFirst(FEED_CONTAINER_XPATH);
+          if (byGenericXpath && countFollowingPostChildren(byGenericXpath).total >= 2) {
+            return byGenericXpath;
+          }
+
+          const main = document.querySelector("main");
+          if (!main) return null;
+
+          const candidates = Array.from(main.querySelectorAll("div"));
+          let best = null;
+          let bestScore = -Infinity;
+
+          for (const el of candidates) {
+            const s = scoreFollowingContainer(el);
+            if (s > bestScore) {
+              bestScore = s;
+              best = el;
+            }
+          }
+
+          return best;
+        }
+
+        function getFollowingItems(root) {
+          if (!root) return [];
+
+          const items = [];
+
+          for (const child of Array.from(root.children || [])) {
+            if (!isFollowingOuterItemElement(child)) continue;
+            child.dataset.arcJkId = getItemId(child) || "";
+            items.push(child);
+          }
+
+          return items;
+        }
+
+        function countPostChildren(container) {
+          const items = getItems(container);
+          return {
+            total: items.length,
+            visible: items.filter(visibleInViewport).length,
+          };
+        }
+
+        function scoreContainer(el) {
+          return scoreLegacyContainer(el);
+        }
+
+        function findFeedContainer(scope = getActiveScope()) {
+          if (shouldUseFollowingItemStrategy(scope)) {
+            return findFollowingFeedContainer();
+          }
+
+          return findLegacyFeedContainer();
+        }
+
+        function getItems(container, scope = getActiveScope()) {
+          if (shouldUseFollowingItemStrategy(scope)) {
+            const root = container || findFeedContainer(scope);
+            return root ? getFollowingItems(root) : [];
+          }
+
+          const root = container || findFeedContainer(scope);
+          if (!root) return [];
+
+          return Array.from(root.children || []).filter(
+            (el) => el.tagName === "DIV" && isFeedItemElement(el),
           );
         }
 
@@ -251,24 +614,70 @@
           return best;
         }
 
-        function getItemId(itemEl) {
-          const a = getBestPermalinkAnchor(itemEl);
+        function depthFromAncestor(node, ancestor) {
+          let depth = 0;
+          let currentNode = node;
+
+          while (currentNode && currentNode !== ancestor) {
+            currentNode = currentNode.parentElement;
+            depth += 1;
+          }
+
+          return currentNode === ancestor ? depth : Infinity;
+        }
+
+        function getBestFollowingPermalinkAnchor(itemEl) {
+          if (!itemEl) return null;
+
+          const itemRect = itemEl.getBoundingClientRect();
+          const anchors = Array.from(
+            itemEl.querySelectorAll('a[href*="/post/"]'),
+          ).filter(isLikelyPostPermalinkAnchor);
+
+          let best = null;
+          let bestScore = -Infinity;
+
+          for (const anchor of anchors) {
+            const anchorRect = anchor.getBoundingClientRect();
+            const depth = depthFromAncestor(anchor, itemEl);
+            let score = scorePermalinkAnchor(anchor);
+
+            score -= Math.min(160, Math.max(0, anchorRect.top - itemRect.top));
+            score -= Math.min(60, depth * 4);
+
+            if (score > bestScore) {
+              bestScore = score;
+              best = anchor;
+            }
+          }
+
+          return best;
+        }
+
+        function getItemId(itemEl, scope = getActiveScope()) {
+          const a = shouldUseFollowingItemStrategy(scope)
+            ? getBestFollowingPermalinkAnchor(itemEl)
+            : getBestPermalinkAnchor(itemEl);
           if (!a) return null;
           return normalizeHref(a.getAttribute("href"));
         }
 
-        function loadProgressId() {
-          const raw = localStorage.getItem(STORAGE_KEY);
+        function loadProgressId(scope = getActiveScope()) {
+          if (!scope?.storageKey) return null;
+          const raw = localStorage.getItem(scope.storageKey);
           return raw && typeof raw === "string" ? raw : null;
         }
 
-        function saveProgressId(id) {
-          if (!id) return;
-          localStorage.setItem(STORAGE_KEY, id);
+        function saveProgressId(id, scope = getActiveScope()) {
+          if (!id || !scope?.allowsPersistence || !scope.storageKey) return false;
+          localStorage.setItem(scope.storageKey, id);
+          return true;
         }
 
-        function clearProgressId() {
-          localStorage.removeItem(STORAGE_KEY);
+        function clearProgressId(scope = getActiveScope()) {
+          if (!scope?.storageKey) return false;
+          localStorage.removeItem(scope.storageKey);
+          return true;
         }
 
         function ensureProgressUI(itemEl) {
@@ -303,6 +712,14 @@
               const item = cb.closest(`.${ITEM_CLASS}`) || cb.parentElement;
               if (!item) return;
 
+              const scope = getActiveScope();
+              if (!scope.allowsPersistence) {
+                cb.checked = false;
+                setCurrent(item, { preventScroll: true });
+                cb.blur?.();
+                return;
+              }
+
               const id = item.dataset.arcJkId || getItemId(item);
               if (!id) {
                 cb.checked = false;
@@ -312,12 +729,12 @@
               item.dataset.arcJkId = id;
 
               if (cb.checked) {
-                saveProgressId(id);
-              } else if (loadProgressId() === id) {
-                clearProgressId();
+                saveProgressId(id, scope);
+              } else if (loadProgressId(scope) === id) {
+                clearProgressId(scope);
               }
 
-              updateProgressCheckboxes();
+              updateProgressCheckboxes({ scope });
               setCurrent(item, { preventScroll: true });
 
               cb.blur?.();
@@ -328,9 +745,11 @@
           itemEl.appendChild(cb);
         }
 
-        function updateProgressCheckboxes() {
-          const saved = loadProgressId();
-          const container = findFeedContainer();
+        function updateProgressCheckboxes({
+          scope = getActiveScope(),
+          container = findFeedContainer(),
+        } = {}) {
+          const saved = scope.allowsPersistence ? loadProgressId(scope) : null;
           const items = getItems(container);
 
           for (const item of items) {
@@ -344,7 +763,7 @@
             );
             if (!cb) continue;
 
-            if (!id) {
+            if (!id || !scope.allowsPersistence) {
               cb.checked = false;
               cb.disabled = true;
               cb.style.display = "none";
@@ -361,6 +780,13 @@
           const el = itemEl || current;
           if (!el) return;
 
+          const scope = getActiveScope();
+          if (!scope.allowsPersistence) {
+            log("Progress disabled for current Bluesky tab:", scope.label);
+            updateProgressCheckboxes({ scope });
+            return;
+          }
+
           const id = el.dataset.arcJkId || getItemId(el);
           if (!id) {
             log(
@@ -369,44 +795,29 @@
             return;
           }
 
-          const saved = loadProgressId();
+          const saved = loadProgressId(scope);
 
           if (saved === id) {
-            clearProgressId();
-            updateProgressCheckboxes();
+            clearProgressId(scope);
+            updateProgressCheckboxes({ scope });
             log("Cleared progress:", id);
             return;
           }
 
-          saveProgressId(id);
-          updateProgressCheckboxes();
+          saveProgressId(id, scope);
+          updateProgressCheckboxes({ scope });
           log("Saved progress:", id);
-        }
-
-        let feedObserver = null;
-
-        function startObservingFeed(container) {
-          if (!container) return;
-          if (feedObserver) return;
-
-          feedObserver = new MutationObserver(() => {
-            updateProgressCheckboxes();
-          });
-
-          feedObserver.observe(container, { childList: true, subtree: false });
         }
 
         function move(dir) {
           const container = findFeedContainer();
           if (!container) return;
 
-          startObservingFeed(container);
-
           const items = getItems(container);
           if (!items.length) return;
 
           for (const el of items) ensureProgressUI(el);
-          updateProgressCheckboxes();
+          updateProgressCheckboxes({ container });
 
           const mid = middleMostVisible(items) || items[0];
 
@@ -468,10 +879,58 @@
           return null;
         }
 
-        async function restoreProgressIfAny() {
-          const savedId = loadProgressId();
-          if (!savedId) return;
+        function syncCurrentView({ shouldRestore = false, force = false } = {}) {
+          const nextScope = getProgressScope();
+          const scopeChanged =
+            force || getScopeToken(currentScope) !== getScopeToken(nextScope);
 
+          if (scopeChanged) {
+            cancelRestore();
+            resetSelection();
+          }
+
+          currentScope = nextScope;
+
+          const container = findFeedContainer();
+          updateProgressCheckboxes({ container, scope: currentScope });
+
+          if (scopeChanged) {
+            log("Bluesky scope:", currentScope.label, currentScope);
+          }
+
+          if (shouldRestore && scopeChanged && currentScope.allowsRestore) {
+            restoreProgressIfAny({ scope: currentScope });
+          }
+        }
+
+        function queueViewSync({ shouldRestore = false, force = false } = {}) {
+          if (shouldRestore) syncRestoreRequested = true;
+          if (force) syncForceRequested = true;
+          if (syncQueued) return;
+
+          syncQueued = true;
+          requestAnimationFrame(() => {
+            syncQueued = false;
+
+            const restoreRequested = syncRestoreRequested;
+            const forceRequested = syncForceRequested;
+
+            syncRestoreRequested = false;
+            syncForceRequested = false;
+
+            syncCurrentView({
+              force: forceRequested,
+              shouldRestore: restoreRequested,
+            });
+          });
+        }
+
+        function restoreProgressIfAny({ scope = getActiveScope() } = {}) {
+          const savedId = loadProgressId(scope);
+          if (!savedId || !scope.allowsRestore) return;
+
+          const restoreRun = ++activeRestoreRun;
+          const scopeToken = getScopeToken(scope);
           restoring = true;
 
           let steps = 0;
@@ -483,15 +942,19 @@
           const TICK_MS = 80;
 
           const tick = () => {
+            if (restoreRun !== activeRestoreRun) return;
+            if (getScopeToken(currentScope) !== scopeToken) {
+              restoring = false;
+              return;
+            }
+
             const container = findFeedContainer();
             if (!container) {
               requestAnimationFrame(tick);
               return;
             }
 
-            startObservingFeed(container);
-
-            updateProgressCheckboxes();
+            updateProgressCheckboxes({ container, scope });
 
             const found = findItemBySavedId(container, savedId);
             if (found) {
@@ -582,12 +1045,48 @@
           true,
         );
 
+        document.addEventListener(
+          "click",
+          (e) => {
+            const container = findHomeFeedTabsContainer();
+            const tab = e.target.closest?.('[role="tab"]');
+            if (!container || !tab || !container.contains(tab)) return;
+            setTimeout(() => {
+              queueViewSync({ shouldRestore: true });
+            }, 30);
+          },
+          true,
+        );
+
+        window.addEventListener(
+          "popstate",
+          () => {
+            queueViewSync({ shouldRestore: true });
+          },
+          true,
+        );
+
+        window.addEventListener(
+          "hashchange",
+          () => {
+            queueViewSync({ shouldRestore: true });
+          },
+          true,
+        );
+
         window.__arcJK = {
           reset: resetSelection,
+          resync: (options = {}) => {
+            queueViewSync({
+              force: !!options.force,
+              shouldRestore: options.shouldRestore !== false,
+            });
+          },
           dump() {
             const c = findFeedContainer();
             const items = getItems(c);
             return {
+              activeScope: getActiveScope(),
               hasContainer: !!c,
               itemCount: items.length,
               currentIndex: items.indexOf(current),
@@ -602,8 +1101,7 @@
           },
         };
 
-        updateProgressCheckboxes();
-        restoreProgressIfAny();
+        queueViewSync({ shouldRestore: true, force: true });
 
         log("loaded");
       })();
