@@ -56,7 +56,6 @@
 
   const routerObserver = new MutationObserver(() => {
     onUrlMaybeChanged();
-    dispatchByRoute();
   });
 
   routerObserver.observe(document.documentElement, {

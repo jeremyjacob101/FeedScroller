@@ -19,10 +19,12 @@
       "matches": ["https://letterboxd.com/*"],
       "css": ["styles.css"],
       "js": [
+        "js/helpers.js",
         "js/storage.js",
         "js/jkl.js",
         "js/autoscroll.js",
         "js/runtime.js",
+        "js/shell.js",
         "sites/letterboxd.js",
         "content.js"
       ],
@@ -32,10 +34,12 @@
       "matches": ["https://x.com/*", "https://www.x.com/*"],
       "css": ["styles.css"],
       "js": [
+        "js/helpers.js",
         "js/storage.js",
         "js/jkl.js",
         "js/autoscroll.js",
         "js/runtime.js",
+        "js/shell.js",
         "sites/x.js",
         "content.js"
       ],
@@ -45,10 +49,12 @@
       "matches": ["https://bsky.app/*"],
       "css": ["styles.css"],
       "js": [
+        "js/helpers.js",
         "js/storage.js",
         "js/jkl.js",
         "js/autoscroll.js",
         "js/runtime.js",
+        "js/shell.js",
         "sites/bluesky.js",
         "content.js"
       ],
