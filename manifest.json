@@ -17,17 +17,41 @@
   "content_scripts": [
     {
       "matches": ["https://letterboxd.com/*"],
-      "js": ["sites/letterboxd.js", "content.js"],
+      "css": ["styles.css"],
+      "js": [
+        "js/storage.js",
+        "js/jkl.js",
+        "js/autoscroll.js",
+        "js/runtime.js",
+        "sites/letterboxd.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://x.com/*", "https://www.x.com/*"],
-      "js": ["sites/x.js", "content.js"],
+      "css": ["styles.css"],
+      "js": [
+        "js/storage.js",
+        "js/jkl.js",
+        "js/autoscroll.js",
+        "js/runtime.js",
+        "sites/x.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://bsky.app/*"],
-      "js": ["sites/bluesky.js", "content.js"],
+      "css": ["styles.css"],
+      "js": [
+        "js/storage.js",
+        "js/jkl.js",
+        "js/autoscroll.js",
+        "js/runtime.js",
+        "sites/bluesky.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

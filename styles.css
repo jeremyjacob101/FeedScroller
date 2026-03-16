@@ -1,0 +1,83 @@
+:root {
+  --arc-jk-highlight-color: rgba(29, 155, 240, 0.95);
+  --arc-jk-highlight-radius: 8px;
+  --arc-jk-highlight-box-radius: 12px;
+  --arc-jk-progress-size: 16px;
+  --arc-jk-progress-offset: -24px;
+  --arc-jk-progress-inactive-opacity: 0.25;
+  --arc-jk-progress-active-opacity: 1;
+  --arc-jk-overlay-inactive-opacity: 0.35;
+  --arc-jk-overlay-active-opacity: 1;
+  --arc-jk-item-overflow: initial;
+}
+
+.__arc_jk_selected,
+.__arc_jk_selected__ {
+  outline: 2px solid var(--arc-jk-highlight-color);
+  outline-offset: 2px;
+  border-radius: var(--arc-jk-highlight-radius);
+  scroll-margin-top: 25vh;
+  scroll-margin-bottom: 25vh;
+}
+
+.__arc_jk_item,
+.__arc_jk_item__ {
+  position: relative;
+  overflow: var(--arc-jk-item-overflow);
+}
+
+.__arc_jk_progress_box,
+.__arc_jk_progress_box__ {
+  width: var(--arc-jk-progress-size);
+  height: var(--arc-jk-progress-size);
+  margin: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+  accent-color: var(--arc-jk-highlight-color);
+  appearance: auto;
+  pointer-events: auto !important;
+}
+
+.__arc_jk_item > .__arc_jk_progress_box,
+.__arc_jk_item__ > .__arc_jk_progress_box__,
+.__arc_jk_item > .__arc_jk_progress_box__,
+.__arc_jk_item__ > .__arc_jk_progress_box {
+  position: absolute;
+  left: var(--arc-jk-progress-offset);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 999999;
+  opacity: var(--arc-jk-progress-inactive-opacity);
+}
+
+.__arc_jk_item:hover > .__arc_jk_progress_box,
+.__arc_jk_item__:hover > .__arc_jk_progress_box__,
+.__arc_jk_item:hover > .__arc_jk_progress_box__,
+.__arc_jk_item__:hover > .__arc_jk_progress_box,
+.__arc_jk_selected > .__arc_jk_progress_box,
+.__arc_jk_selected__ > .__arc_jk_progress_box__,
+.__arc_jk_selected > .__arc_jk_progress_box__,
+.__arc_jk_selected__ > .__arc_jk_progress_box {
+  opacity: var(--arc-jk-progress-active-opacity);
+}
+
+#__arc_jk_highlight_box__ {
+  position: fixed;
+  box-sizing: border-box;
+  border: 2px solid var(--arc-jk-highlight-color);
+  border-radius: var(--arc-jk-highlight-box-radius);
+  pointer-events: none;
+  z-index: 2147483647;
+  display: none;
+}
+
+input.__arc_jk_progress_box__[data-arc-jk="1"] {
+  position: fixed;
+  z-index: 2147483647;
+  background: transparent;
+  opacity: var(--arc-jk-overlay-inactive-opacity);
+}
+
+input.__arc_jk_progress_box__[data-arc-jk="1"][data-selected="1"] {
+  opacity: var(--arc-jk-overlay-active-opacity);
+}
