@@ -96,6 +96,7 @@
     isReady = () => true,
     maxMs = null,
     maxSteps = 200,
+    onMissingItem = null,
     shouldPauseAfterProgress = null,
     startDelayMs = 50,
     stopWhenStuckAtOrAbove = false,
@@ -119,6 +120,7 @@
       isReady,
       maxMs,
       maxSteps,
+      onMissingItem,
       shouldPauseAfterProgress,
       scroll(context, snapshot) {
         const scrollEl = getScrollEl(context);
@@ -140,6 +142,7 @@
     isReady = () => true,
     maxMs = null,
     maxSteps = 200,
+    onMissingItem = null,
     startDelayMs = 50,
     stopWhenStuckAtOrAbove = false,
     stuckLimit = 10,
@@ -149,6 +152,7 @@
       isReady,
       maxMs,
       maxSteps,
+      onMissingItem,
       getSnapshot() {
         return {
           scrollHeight: getDocumentScrollHeight(),
@@ -165,6 +169,7 @@
     getSignature = () => "",
     isReady = () => true,
     maxSteps = 200,
+    onMissingItem = null,
     startDelayMs = 50,
     stuckLimit = 10,
     tickMs = 120,
@@ -174,6 +179,7 @@
       getSignature,
       isReady,
       maxSteps,
+      onMissingItem,
       startDelayMs,
       stuckLimit,
       tickMs,
@@ -197,6 +203,7 @@
       isProgressing = defaultIsScrollProgressing,
       maxMs = null,
       maxSteps = null,
+      onMissingItem = null,
       shouldPauseAfterProgress = null,
       startDelayMs = 50,
       stopWhenStuckAtOrAbove = false,
@@ -231,6 +238,17 @@
         context.controller.setCurrent(found);
         context.controller.setRestoring(false);
         return;
+      }
+
+      if (typeof onMissingItem === "function") {
+        const handled = !!onMissingItem({
+          ...context,
+          steps,
+        });
+        if (handled) {
+          stop();
+          return;
+        }
       }
 
       steps += 1;
@@ -307,6 +325,7 @@
       isReady = () => true,
       getSignature = () => "",
       maxSteps = 200,
+      onMissingItem = null,
       startDelayMs = 50,
       stuckLimit = 10,
       tickMs = 120,
@@ -339,6 +358,17 @@
         context.controller.setCurrent(found);
         context.controller.setRestoring(false);
         return;
+      }
+
+      if (typeof onMissingItem === "function") {
+        const handled = !!onMissingItem({
+          ...context,
+          steps,
+        });
+        if (handled) {
+          stop();
+          return;
+        }
       }
 
       steps += 1;

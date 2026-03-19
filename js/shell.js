@@ -42,10 +42,12 @@
   };
 
   const DEFAULT_FLAGS = {
+    enableAfterSyncHandler: false,
     enableArticleAncestorItems: false,
     enableAttributeItemId: false,
     enableBoundaryIdProgressTracking: false,
     enableBottomJumpRestore: false,
+    enableCollapseNonHeaderContent: false,
     enableContainerCandidateSearch: false,
     enableContainerXPathLookup: false,
     enableDirectChildItems: false,
@@ -71,6 +73,7 @@
     enableProfileByScopeKey: false,
     enableRegexItemId: false,
     enableRestoreDelay: false,
+    enableRestoreMissingItemHandler: false,
     enableRestorePauseAfterGrowth: false,
     enableSingleFixedScope: false,
     enableTabAriaActiveState: false,
@@ -151,12 +154,27 @@
     },
   };
 
+  const DEFAULT_COLLAPSE = {
+    contentContainerXPath: null,
+    headerXPath: null,
+    hideFollowingSiblingsOfHeader: false,
+    startCollapsed: true,
+    toggleCollapsedLabel: "▸",
+    toggleExpandedLabel: "▾",
+    toggleTitleCollapsed: "Show content",
+    toggleTitleExpanded: "Hide content",
+    transitionMs: 220,
+  };
+
   const DEFAULT_RESTORE = {
     buttonXPath: null,
     clickThrottleMs: 900,
     maxMs: null,
     maxSteps: 200,
     mode: null,
+    onMissingItem: null,
+    onMissingItemHandlerName: null,
+    onMissingItemHandlerOptions: null,
     postLoadDelayMs: 0,
     readinessRequiresContainer: false,
     restoreDelayMs: 0,
@@ -364,6 +382,10 @@
       classes: {
         ...DEFAULT_CLASSES,
         ...(rawSpec.classes || {}),
+      },
+      collapse: {
+        ...DEFAULT_COLLAPSE,
+        ...(rawSpec.collapse || {}),
       },
       controller: {
         ...(rawSpec.controller || {}),
@@ -1300,6 +1322,72 @@
   function buildControllerConfig(spec, adapter, renderer) {
     const isOverlay = spec.flags.enableOverlayRenderer;
     const controller = spec.controller || {};
+    const namedAfterSyncHandler =
+      spec.flags.enableAfterSyncHandler &&
+      typeof controller.afterSyncHandlerName === "string"
+        ? helpers.afterSyncHandlers?.[controller.afterSyncHandlerName]
+        : null;
+    const inlineAfterSyncHandler =
+      spec.flags.enableAfterSyncHandler &&
+      typeof controller.onAfterSync === "function"
+        ? controller.onAfterSync
+        : null;
+    let lastAfterSyncState = {
+      savedId: null,
+      scope: null,
+      scopeToken: "",
+    };
+
+    function buildScopeToken(scope) {
+      if (!scope) return "none";
+
+      return [
+        scope.kind || "global",
+        scope.key || "global",
+        scope.allowsPersistence ? "1" : "0",
+        scope.allowsRestore ? "1" : "0",
+      ].join(":");
+    }
+
+    function handleAfterSync(context) {
+      if (spec.flags.enableCollapseNonHeaderContent) {
+        helpers.applyCollapseNonHeaderContent?.({
+          items: context.items,
+          options: spec.collapse || {},
+          spec,
+        });
+      }
+
+      const scopeToken = buildScopeToken(context.scope);
+      const previousSavedId =
+        scopeToken === lastAfterSyncState.scopeToken
+          ? lastAfterSyncState.savedId
+          : null;
+      const previousScope =
+        scopeToken === lastAfterSyncState.scopeToken
+          ? lastAfterSyncState.scope
+          : null;
+      const sharedContext = {
+        ...context,
+        adapter,
+        options: controller.afterSyncHandlerOptions || {},
+        previousSavedId,
+        previousScope,
+        savedIdChanged:
+          previousSavedId !== context.savedId ||
+          scopeToken !== lastAfterSyncState.scopeToken,
+        spec,
+      };
+
+      inlineAfterSyncHandler?.(sharedContext);
+      namedAfterSyncHandler?.(sharedContext);
+
+      lastAfterSyncState = {
+        savedId: context.savedId || null,
+        scope: context.scope || null,
+        scopeToken,
+      };
+    }
 
     return {
       allowTypingTarget: (el) => el === renderer.getKeySink?.(),
@@ -1308,6 +1396,11 @@
       installResetHandlers: controller.installResetHandlers ?? true,
       installSyncHandlers: controller.installSyncHandlers ?? isOverlay,
       isEnabled: (scope) => adapter.isControllerEnabled(scope),
+      onAfterSync:
+        spec.flags.enableAfterSyncHandler &&
+        (namedAfterSyncHandler || inlineAfterSyncHandler)
+          ? handleAfterSync
+          : null,
       renderer,
       resetHandlerOptions: {
         events: controller.resetEvents || (isOverlay ? ["scroll"] : ["wheel", "touchstart", "scroll"]),
@@ -1346,6 +1439,34 @@
   }
 
   function buildRestoreStrategy({ adapter, autoscroll, getController, spec }) {
+    const namedMissingItemHandler =
+      typeof spec.restore.onMissingItemHandlerName === "string"
+        ? helpers.restoreMissingItemHandlers?.[
+            spec.restore.onMissingItemHandlerName
+          ]
+        : null;
+    const onMissingItem =
+      spec.flags.enableRestoreMissingItemHandler
+        ? typeof spec.restore.onMissingItem === "function"
+          ? (context) =>
+              !!spec.restore.onMissingItem({
+                ...context,
+                adapter,
+                controller: getController?.() || context.controller,
+                spec,
+              })
+          : typeof namedMissingItemHandler === "function"
+            ? (context) =>
+                !!namedMissingItemHandler({
+                  ...context,
+                  adapter,
+                  controller: getController?.() || context.controller,
+                  options: spec.restore.onMissingItemHandlerOptions || {},
+                  spec,
+                })
+            : null
+        : null;
+
     if (spec.flags.enableDocumentBottomRestore) {
       return autoscroll.createDocumentBottomScrollStrategy({
         isReady() {
@@ -1353,6 +1474,7 @@
         },
         maxMs: spec.restore.maxMs,
         maxSteps: spec.restore.maxSteps,
+        onMissingItem,
         startDelayMs: spec.restore.startDelayMs,
         stopWhenStuckAtOrAbove: spec.restore.stopWhenStuckAtOrAbove,
         stuckLimit: spec.restore.stuckLimit,
@@ -1375,6 +1497,7 @@
         },
         maxMs: spec.restore.maxMs,
         maxSteps: spec.restore.maxSteps,
+        onMissingItem,
         shouldPauseAfterProgress(context) {
           return adapter.shouldPauseAfterProgress(context);
         },
@@ -1397,6 +1520,7 @@
           return !spec.restore.readinessRequiresContainer || !!adapter.findReadyContainer();
         },
         maxSteps: spec.restore.maxSteps,
+        onMissingItem,
         startDelayMs: spec.restore.startDelayMs,
         stuckLimit: spec.restore.stuckLimit,
         tickMs: spec.restore.tickMs,

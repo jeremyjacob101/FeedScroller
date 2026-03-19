@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FeedScroller",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Restores scroll position to your last checked item on specific social sites.",
   "icons": {
     "16": "icons/icon16.png",
@@ -56,6 +56,24 @@
         "js/runtime.js",
         "js/shell.js",
         "sites/bluesky.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.timesofisrael.com/*",
+        "https://timesofisrael.com/*"
+      ],
+      "css": ["styles.css"],
+      "js": [
+        "js/helpers.js",
+        "js/storage.js",
+        "js/jkl.js",
+        "js/autoscroll.js",
+        "js/runtime.js",
+        "js/shell.js",
+        "sites/timesofisrael.js",
         "content.js"
       ],
       "run_at": "document_idle"
