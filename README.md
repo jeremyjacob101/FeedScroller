@@ -20,6 +20,10 @@
 > FeedScroller is built to make that problem feel much smaller: move through posts, mark your checkpoint, and come back to the same spot later without manual scrolling.
 
 <p align="center">
+  <a href="https://chromewebstore.google.com/detail/feedscroller/ohhbljjllblidifbhhmmommmpkjbndpa">Take me there →</a>
+</p>
+
+<p align="center">
   <img src="docs/images/feedscroller-demo.gif" alt="FeedScroller demo GIF" width="500">
 </p>
 
