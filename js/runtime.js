@@ -16,6 +16,7 @@
   }
 
   function createFindItemBySavedId({
+    cacheItemIds = true,
     getItems,
     getItemId,
     getScope = () => undefined,
@@ -24,10 +25,13 @@
       if (!savedId) return null;
 
       for (const item of getItems(scope)) {
-        const id = item.dataset.arcJkId || getItemId(item, scope);
+        const id = cacheItemIds
+          ? item.dataset.arcJkId || getItemId(item, scope)
+          : getItemId(item, scope);
         if (!id) continue;
 
-        item.dataset.arcJkId = id;
+        if (cacheItemIds) item.dataset.arcJkId = id;
+        else delete item.dataset.arcJkId;
         if (id === savedId) return item;
       }
 
@@ -200,6 +204,7 @@
     const resolvedFindItemBySavedId =
       findItemBySavedId ||
       createFindItemBySavedId({
+        cacheItemIds: controllerConfig.cacheItemIds,
         getItemId,
         getItems,
         getScope: () => progressStorage.getScope(),
@@ -353,6 +358,7 @@
     const resolvedFindItemBySavedId =
       findItemBySavedId ||
       createFindItemBySavedId({
+        cacheItemIds: controllerConfig.cacheItemIds,
         getItemId,
         getItems,
         getScope: () => storage.getScope(),

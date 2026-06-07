@@ -43,6 +43,7 @@
       enableAttributeItemId: false,
       enableBoundaryIdProgressTracking: true,
       enableBottomJumpRestore: true,
+      enableCachedItemIds: false,
       enableCollapseNonHeaderContent: false,
       enableContainerCandidateSearch: false,
       enableContainerXPathLookup: false,
@@ -90,14 +91,14 @@
     },
     name: "x",
     restore: {
-      maxMs: 60000,
+      maxMs: 12000,
       onMissingItem({ steps }) {
-        return steps >= 40;
+        return steps >= 12;
       },
       postLoadDelayMs: 320,
       restoreDelayMs: 120,
       startDelayMs: 50,
-      stuckLimit: 140,
+      stuckLimit: 24,
       tickMs: 120,
     },
     scope: {

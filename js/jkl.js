@@ -117,7 +117,8 @@
 
         for (const item of context.items) {
           const id = context.getItemId(item) || "";
-          item.dataset.arcJkId = id;
+          if (context.cacheItemIds) item.dataset.arcJkId = id;
+          else delete item.dataset.arcJkId;
 
           const checkbox = ensureCheckbox(item);
           if (!checkbox) continue;
@@ -290,7 +291,8 @@
           if (rect.bottom < topLimit || rect.top > bottomLimit) continue;
 
           const id = context.getItemId(item) || "";
-          item.dataset.arcJkId = id;
+          if (context.cacheItemIds) item.dataset.arcJkId = id;
+          else delete item.dataset.arcJkId;
 
           if (!id || !context.canToggleProgress) continue;
 
@@ -334,6 +336,7 @@
 
   function createController({
     allowTypingTarget = () => false,
+    cacheItemIds = true,
     canToggleProgress = (scope) => !!scope?.allowsPersistence,
     focusCurrent = true,
     getItemId,
@@ -360,6 +363,19 @@
 
     function getScope() {
       return storage.getScope();
+    }
+
+    function resolveItemId(itemEl, scope = getScope()) {
+      if (!itemEl) return "";
+
+      const id = cacheItemIds
+        ? itemEl.dataset.arcJkId || getItemId(itemEl, scope) || ""
+        : getItemId(itemEl, scope) || "";
+
+      if (id && cacheItemIds) itemEl.dataset.arcJkId = id;
+      else if (!cacheItemIds) delete itemEl.dataset.arcJkId;
+
+      return id;
     }
 
     function markNavScrolling() {
@@ -453,8 +469,9 @@
 
       renderer.render?.({
         canToggleProgress: progressEnabled,
+        cacheItemIds,
         current: state.current,
-        getItemId: (item) => getItemId(item, scope),
+        getItemId: (item) => resolveItemId(item, scope),
         items,
         onCheckboxChange: handleCheckboxChange,
         savedId,
@@ -515,10 +532,8 @@
         return false;
       }
 
-      const id = itemEl.dataset.arcJkId || getItemId(itemEl, scope);
+      const id = resolveItemId(itemEl, scope);
       if (!id) return false;
-
-      itemEl.dataset.arcJkId = id;
 
       const savedId = storage.load(scope);
       if (savedId === id) storage.clear(scope);
@@ -541,14 +556,12 @@
         return;
       }
 
-      const id = item.dataset.arcJkId || getItemId(item, scope);
+      const id = resolveItemId(item, scope);
       if (!id) {
         checkbox.checked = false;
         queueSync();
         return;
       }
-
-      item.dataset.arcJkId = id;
 
       if (checkbox.checked) storage.save(id, scope);
       else if (storage.load(scope) === id) storage.clear(scope);

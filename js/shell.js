@@ -47,6 +47,7 @@
     enableAttributeItemId: false,
     enableBoundaryIdProgressTracking: false,
     enableBottomJumpRestore: false,
+    enableCachedItemIds: true,
     enableCollapseNonHeaderContent: false,
     enableContainerCandidateSearch: false,
     enableContainerXPathLookup: false,
@@ -1179,8 +1180,14 @@
     function getCachedItemId(itemEl, scope = getCurrentScope()) {
       if (!itemEl) return "";
 
-      const id = itemEl.dataset.arcJkId || getItemId(itemEl, scope) || "";
-      if (id) itemEl.dataset.arcJkId = id;
+      if (spec.flags.enableCachedItemIds) {
+        const id = itemEl.dataset.arcJkId || getItemId(itemEl, scope) || "";
+        if (id) itemEl.dataset.arcJkId = id;
+        return id;
+      }
+
+      delete itemEl.dataset.arcJkId;
+      const id = getItemId(itemEl, scope) || "";
       return id;
     }
 
@@ -1391,6 +1398,7 @@
 
     return {
       allowTypingTarget: (el) => el === renderer.getKeySink?.(),
+      cacheItemIds: spec.flags.enableCachedItemIds,
       canToggleProgress: (scope) => adapter.canToggleProgress(scope),
       focusCurrent: controller.focusCurrent ?? !isOverlay,
       installResetHandlers: controller.installResetHandlers ?? true,
