@@ -13,7 +13,7 @@
       profiles: {
         activity: {
           container: {
-            xpaths: ["/html/body/div[1]/div/div/section/div[2]/div"],
+            xpaths: ["/html/body/main/div/div/section/div[2]/div"],
           },
           itemId: {
             attributeName: "data-activity-id",
@@ -21,7 +21,7 @@
           },
           items: {
             mode: "xpath-snapshot",
-            xpath: "/html/body/div[1]/div/div/section/div[2]/div/section",
+            xpath: "/html/body/main/div/div/section/div[2]/div/section",
           },
         },
       },
@@ -80,7 +80,7 @@
     name: "letterboxd",
     observer: {
       childList: true,
-      containerXPath: "/html/body/div[1]/div/div/section/div[2]/div",
+      containerXPath: "/html/body/main/div/div/section/div[2]/div",
       subtree: false,
     },
     render: {
@@ -95,7 +95,7 @@
       },
     },
     restore: {
-      buttonXPath: "/html/body/div[1]/div/div/section/div[3]/div/a",
+      buttonXPath: "/html/body/main/div/div/section/div[3]/div/a",
       clickThrottleMs: 900,
       maxSteps: 260,
       readinessRequiresContainer: true,
