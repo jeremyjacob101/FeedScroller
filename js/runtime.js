@@ -67,9 +67,12 @@
     queueSync,
     {
       click = null,
+      focus = false,
       hashchange = false,
       mutation = null,
       popstate = false,
+      pageshow = false,
+      visibilitychange = false,
     } = {},
   ) {
     const cleanups = [];
@@ -89,6 +92,15 @@
       cleanups.push(() =>
         clickTarget.removeEventListener("click", listener, true),
       );
+    }
+
+    if (focus) {
+      const listener = () => {
+        queueSync({ shouldRestore: true });
+      };
+
+      window.addEventListener("focus", listener, true);
+      cleanups.push(() => window.removeEventListener("focus", listener, true));
     }
 
     if (mutation) {
@@ -124,6 +136,27 @@
       window.addEventListener("hashchange", listener, true);
       cleanups.push(() =>
         window.removeEventListener("hashchange", listener, true),
+      );
+    }
+
+    if (pageshow) {
+      const listener = () => {
+        queueSync({ shouldRestore: true });
+      };
+
+      window.addEventListener("pageshow", listener, true);
+      cleanups.push(() => window.removeEventListener("pageshow", listener, true));
+    }
+
+    if (visibilitychange) {
+      const listener = () => {
+        if (document.visibilityState !== "visible") return;
+        queueSync({ shouldRestore: true });
+      };
+
+      document.addEventListener("visibilitychange", listener, true);
+      cleanups.push(() =>
+        document.removeEventListener("visibilitychange", listener, true),
       );
     }
 

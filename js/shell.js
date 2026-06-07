@@ -1435,6 +1435,10 @@
       };
     }
 
+    events.focus = true;
+    events.pageshow = true;
+    events.visibilitychange = true;
+
     return events;
   }
 

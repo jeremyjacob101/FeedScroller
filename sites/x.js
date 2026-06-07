@@ -69,7 +69,7 @@
       enableProfileByScopeKey: false,
       enableRegexItemId: true,
       enableRestoreDelay: true,
-      enableRestoreMissingItemHandler: false,
+      enableRestoreMissingItemHandler: true,
       enableRestorePauseAfterGrowth: true,
       enableSingleFixedScope: false,
       enableTabAriaActiveState: true,
@@ -91,6 +91,9 @@
     name: "x",
     restore: {
       maxMs: 60000,
+      onMissingItem({ steps }) {
+        return steps >= 40;
+      },
       postLoadDelayMs: 320,
       restoreDelayMs: 120,
       startDelayMs: 50,
