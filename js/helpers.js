@@ -697,6 +697,7 @@
   }
 
   const loadMoreClickStateByKey = Object.create(null);
+  const autoScrollLoadMoreStateByKey = Object.create(null);
 
   function tryClickLoadMoreButton({
     controller,
@@ -736,6 +737,125 @@
     }
 
     loadMoreClickStateByKey[clickStateKey] = clickState;
+    return true;
+  }
+
+  function scrollDocumentToBottom() {
+    const height =
+      document.documentElement.scrollHeight ||
+      document.body.scrollHeight ||
+      0;
+    window.scrollTo?.({ top: height, left: 0, behavior: "auto" });
+  }
+
+  function getLastLoadMoreItem({
+    currentPath = location.pathname,
+  } = {}) {
+    if (!/^\/liveblog-[a-z]+-\d{1,2}-\d{4}\/?$/.test(normalizePathname(currentPath))) {
+      return null;
+    }
+
+    const container = evalXPathFirst(
+      "//div[contains(concat(' ', normalize-space(@class), ' '), ' liveblogdiv ')]",
+    );
+    if (!container) return null;
+
+    const items = Array.from(container.querySelectorAll(":scope > div"))
+      .filter((node) => !!node?.getAttribute?.("data-item") || !!node?.querySelector?.('h4 > a[href*="/liveblog_entry/"]'));
+
+    return items.length ? items[items.length - 1] : null;
+  }
+
+  function focusLastLoadMoreItem({
+    currentPath = location.pathname,
+  } = {}) {
+    const item = getLastLoadMoreItem({ currentPath });
+    if (!item) return false;
+
+    item.scrollIntoView?.({
+      block: "end",
+      inline: "nearest",
+    });
+    item.focus?.({ preventScroll: true });
+    item.dispatchEvent?.(new MouseEvent("mouseover", { bubbles: true }));
+    return true;
+  }
+
+  function autoClickLoadMoreToFinalPost({
+    controller,
+    currentPath = location.pathname,
+    loadMoreButtonXPaths = [],
+    loadMoreClickThrottleMs = 900,
+    maxIdleTicks = 15,
+    maxSteps = 240,
+    sessionKey = "__arcJKLoadMoreToBottom__",
+    tickMs = 120,
+  } = {}) {
+    if (!Array.isArray(loadMoreButtonXPaths) || !loadMoreButtonXPaths.length) {
+      return false;
+    }
+
+    const stateKey = `${sessionKey}::${normalizePathname(currentPath)}`;
+    const state = autoScrollLoadMoreStateByKey[stateKey] || {
+      active: false,
+      steps: 0,
+    };
+
+    if (state.active) return true;
+
+    state.active = true;
+    state.steps = 0;
+    state.idleTicks = 0;
+    autoScrollLoadMoreStateByKey[stateKey] = state;
+
+    const tick = () => {
+      if (!state.active) return;
+
+      if (state.steps >= maxSteps) {
+        state.active = false;
+        scrollDocumentToBottom();
+        return;
+      }
+
+      const beforeItem = getLastLoadMoreItem({ currentPath });
+
+      const clicked = tryClickLoadMoreButton({
+        controller,
+        currentPath,
+        loadMoreButtonXPaths,
+        loadMoreClickThrottleMs,
+        sessionKey,
+      });
+
+      if (!clicked) {
+        state.active = false;
+        scrollDocumentToBottom();
+        focusLastLoadMoreItem({ currentPath, loadMoreButtonXPaths });
+        return;
+      }
+
+      state.steps += 1;
+      setTimeout(() => {
+        const afterItem = getLastLoadMoreItem({ currentPath });
+
+        if (beforeItem && afterItem && afterItem === beforeItem) {
+          state.idleTicks += 1;
+        } else {
+          state.idleTicks = 0;
+        }
+
+        if (state.idleTicks >= maxIdleTicks) {
+          state.active = false;
+          scrollDocumentToBottom();
+          focusLastLoadMoreItem({ currentPath });
+          return;
+        }
+
+        setTimeout(tick, tickMs);
+      }, tickMs);
+    };
+
+    setTimeout(tick, 0);
     return true;
   }
 
@@ -982,6 +1102,36 @@
         });
         navigateToMonthNamedPath(todayTargetPath, {
           trailingSlash: options.trailingSlash !== false,
+        });
+      },
+    });
+
+    const loadMoreButtonXPaths = Array.isArray(
+      spec.restore?.onMissingItemHandlerOptions?.loadMoreButtonXPaths,
+    )
+      ? spec.restore.onMissingItemHandlerOptions.loadMoreButtonXPaths
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      : [];
+
+    appendButton({
+      disabled: !loadMoreButtonXPaths.length,
+      label: "Scroll to Bottom",
+      onClick: () => {
+        autoClickLoadMoreToFinalPost({
+          currentPath,
+          loadMoreButtonXPaths,
+          loadMoreClickThrottleMs:
+            Number(
+              spec.restore?.onMissingItemHandlerOptions?.loadMoreClickThrottleMs,
+            ) || 900,
+          maxSteps: Number(spec.restore?.maxSteps) || 240,
+          maxIdleTicks: 15,
+          sessionKey:
+            String(
+              spec.restore?.onMissingItemHandlerOptions?.sessionKey || "",
+            ).trim() || "__arcJKLoadMoreToBottom__",
+          tickMs: Number(spec.restore?.tickMs) || 120,
         });
       },
     });
