@@ -782,31 +782,24 @@
   }
 
   function autoClickLoadMoreToFinalPost({
-    controller,
     currentPath = location.pathname,
     loadMoreButtonXPaths = [],
     loadMoreClickThrottleMs = 900,
     maxIdleTicks = 15,
     maxSteps = 240,
-    sessionKey = "__arcJKLoadMoreToBottom__",
     tickMs = 120,
   } = {}) {
     if (!Array.isArray(loadMoreButtonXPaths) || !loadMoreButtonXPaths.length) {
       return false;
     }
 
-    const stateKey = `${sessionKey}::${normalizePathname(currentPath)}`;
-    const state = autoScrollLoadMoreStateByKey[stateKey] || {
+    const state = {
       active: false,
       steps: 0,
+      idleTicks: 0,
     };
 
-    if (state.active) return true;
-
     state.active = true;
-    state.steps = 0;
-    state.idleTicks = 0;
-    autoScrollLoadMoreStateByKey[stateKey] = state;
 
     const tick = () => {
       if (!state.active) return;
@@ -814,23 +807,22 @@
       if (state.steps >= maxSteps) {
         state.active = false;
         scrollDocumentToBottom();
+        focusLastLoadMoreItem({ currentPath });
         return;
       }
 
       const beforeItem = getLastLoadMoreItem({ currentPath });
 
       const clicked = tryClickLoadMoreButton({
-        controller,
         currentPath,
         loadMoreButtonXPaths,
         loadMoreClickThrottleMs,
-        sessionKey,
       });
 
       if (!clicked) {
         state.active = false;
         scrollDocumentToBottom();
-        focusLastLoadMoreItem({ currentPath, loadMoreButtonXPaths });
+        focusLastLoadMoreItem({ currentPath });
         return;
       }
 
@@ -855,6 +847,7 @@
       }, tickMs);
     };
 
+    scrollDocumentToBottom();
     setTimeout(tick, 0);
     return true;
   }
@@ -1127,10 +1120,6 @@
             ) || 900,
           maxSteps: Number(spec.restore?.maxSteps) || 240,
           maxIdleTicks: 15,
-          sessionKey:
-            String(
-              spec.restore?.onMissingItemHandlerOptions?.sessionKey || "",
-            ).trim() || "__arcJKLoadMoreToBottom__",
           tickMs: Number(spec.restore?.tickMs) || 120,
         });
       },
