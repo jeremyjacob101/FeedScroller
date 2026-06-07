@@ -547,6 +547,27 @@
       return toggleProgressForItem(state.current);
     }
 
+    function findCollapseToggleForCurrent() {
+      if (!state.current || !document.contains(state.current)) return null;
+
+      return (
+        state.current.querySelector?.(
+          ':scope .__arc_jk_collapsible_toggle__[data-arc-jk-collapse="1"]',
+        ) || null
+      );
+    }
+
+    function setCollapseExpandedForCurrent(expanded) {
+      const toggleButton = findCollapseToggleForCurrent();
+      if (!toggleButton) return false;
+
+      const isExpanded = toggleButton.getAttribute("aria-expanded") === "true";
+      if (isExpanded === !!expanded) return true;
+
+      toggleButton.click?.();
+      return true;
+    }
+
     function handleCheckboxChange(item, checkbox) {
       const scope = getScope();
       if (!canToggleProgress(scope)) {
@@ -575,7 +596,7 @@
       if (!isEnabled(scope)) return;
 
       const key = (event.key || "").toLowerCase();
-      if (key !== "j" && key !== "k" && key !== "l") return;
+      if (key !== "j" && key !== "k" && key !== "l" && key !== "arrowleft" && key !== "arrowright") return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (key === "l" && event.repeat && !allowToggleRepeat) return;
 
@@ -595,6 +616,28 @@
 
       if (key === "k") {
         move(-1);
+        return;
+      }
+
+      if (key === "arrowright") {
+        if (!state.current || !document.contains(state.current)) {
+          const items = (getItems(scope) || []).filter(Boolean);
+          const middleItem = getAnchorItem(items);
+          if (middleItem) setCurrent(middleItem);
+        }
+
+        if (state.current) setCollapseExpandedForCurrent(true);
+        return;
+      }
+
+      if (key === "arrowleft") {
+        if (!state.current || !document.contains(state.current)) {
+          const items = (getItems(scope) || []).filter(Boolean);
+          const middleItem = getAnchorItem(items);
+          if (middleItem) setCurrent(middleItem);
+        }
+
+        if (state.current) setCollapseExpandedForCurrent(false);
         return;
       }
 
