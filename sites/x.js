@@ -22,7 +22,7 @@
             mode: "article-ancestor",
             requiredDescendantSelector: 'a[href*="/status/"]',
             searchRootSelector: "main",
-            selector: "article",
+            selector: 'article[data-testid="tweet"]',
             sortByTop: true,
           },
           match: {
